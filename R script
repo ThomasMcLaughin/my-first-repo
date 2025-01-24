@@ -1,0 +1,380 @@
+## Load vcf, run PCA, calculate K-means clustering, calculate matrix of geneic distances, run AMOVA
+## Filip Kolar 2017, further edits by Sian Bray 2018 and Levi Yant 2022,3
+
+setwd("c:/Users/44794/OneDrive - The University of Nottingham/Documents/Thomas R")
+
+options(warn=1)
+
+library(adegenet)
+library(adegraphics) #not strictly necessary for all of this (hombrew r installs will interfere)
+library(vcfR)
+library(pegas)
+library(StAMPP)
+library(ade4)
+library(MASS)
+
+
+
+##################### 
+# MODIFIED FUNCTIONS
+
+# This block is a function for conversion from vcfR object to genlight in tetraploids and hexaploids: note this changed function is not necessary for LIFE4141 assignment, but it may be helpful later.
+vcfR2genlight.tetra <- function (x, n.cores = 1) 
+{
+  bi <- is.biallelic(x)
+  if (sum(!bi) > 0) {
+    msg <- paste("Found", sum(!bi), "loci with more than two alleles.")
+    msg <- c(msg, "\n", paste("Objects of class genlight only support loci with two alleles."))
+    msg <- c(msg, "\n", paste(sum(!bi), "loci will be omitted from the genlight object."))
+    warning(msg)
+    x <- x[bi, ]
+  }
+  x <- addID(x)
+  CHROM <- x@fix[, "CHROM"]
+  POS <- x@fix[, "POS"]
+  ID <- x@fix[, "ID"]
+  x <- extract.gt(x)
+  x[x == "0|0"] <- 0
+  x[x == "0|1"] <- 1
+  x[x == "1|0"] <- 1
+  x[x == "1|1"] <- 2
+  x[x == "0/0"] <- 0
+  x[x == "0/1"] <- 1
+  x[x == "1/0"] <- 1
+  x[x == "1/1"] <- 2
+  x[x == "1/1/1/1"] <- 4
+  x[x == "0/1/1/1"] <- 3
+  x[x == "0/0/1/1"] <- 2
+  x[x == "0/0/0/1"] <- 1
+  x[x == "0/0/0/0"] <- 0
+  x[x == "0/0/0/0/0/0"] <- 0
+  x[x == "0/0/0/0/0/1"] <- 1
+  x[x == "0/0/0/0/1/1"] <- 2
+  x[x == "0/0/0/1/1/1"] <- 3
+  x[x == "0/0/1/1/1/1"] <- 4
+  x[x == "0/1/1/1/1/1"] <- 5
+  x[x == "1/1/1/1/1/1"] <- 6
+  if (requireNamespace("adegenet")) {
+    x <- new("genlight", t(x), n.cores = n.cores)
+  }
+  else {
+    warning("adegenet not installed")
+  }
+  adegenet::chromosome(x) <- CHROM
+  adegenet::position(x) <- POS
+  adegenet::locNames(x) <- ID
+  return(x)
+}
+
+
+
+
+## -------------------------------------------------------
+### This is a patch for MUCH MUCH faster PCA calculation on genlight objects
+# see https://github.com/thibautjombart/adegenet/pull/150
+glPcaFast <- function(x,
+                      center=TRUE,
+                      scale=FALSE,
+                      nf=NULL,
+                      loadings=TRUE,
+                      alleleAsUnit=FALSE,
+                      returnDotProd=FALSE){
+  
+  if(!inherits(x, "genlight")) stop("x is not a genlight object")
+  # keep the original mean / var code, as it's used further down
+  # and has some NA checks..
+  if(center) {
+    vecMeans <- glMean(x, alleleAsUnit=alleleAsUnit)
+    if(any(is.na(vecMeans))) stop("NAs detected in the vector of means")
+  }
+  if(scale){
+    vecVar <- glVar(x, alleleAsUnit=alleleAsUnit)
+    if(any(is.na(vecVar))) stop("NAs detected in the vector of variances")
+  }
+  # convert to full data, try to keep the NA handling as similar
+  # to the original as possible
+  # - dividing by ploidy keeps the NAs
+  mx <- t(sapply(x$gen, as.integer)) / ploidy(x)
+  # handle NAs
+  NAidx <- which(is.na(mx), arr.ind = T)
+  if (center) {
+    mx[NAidx] <- vecMeans[NAidx[,2]]
+  } else {
+    mx[NAidx] <- 0
+  }
+  # center and scale
+  mx <- scale(mx,
+              center = if (center) vecMeans else F,
+              scale = if (scale) vecVar else F)
+  # all dot products at once using underlying BLAS
+  # to support thousands of samples, this could be
+  # replaced by 'Truncated SVD', but it would require more changes
+  # in the code around
+  allProd <- tcrossprod(mx) / nInd(x) # assume uniform weights
+  ## PERFORM THE ANALYSIS ##
+  ## eigenanalysis
+  eigRes <- eigen(allProd, symmetric=TRUE, only.values=FALSE)
+  rank <- sum(eigRes$values > 1e-12)
+  eigRes$values <- eigRes$values[1:rank]
+  eigRes$vectors <- eigRes$vectors[, 1:rank, drop=FALSE]
+  ## scan nb of axes retained
+  if(is.null(nf)){
+    barplot(eigRes$values, main="Eigenvalues", col=heat.colors(rank))
+    cat("Select the number of axes: ")
+    nf <- as.integer(readLines(n = 1))
+  }
+  ## rescale PCs
+  res <- list()
+  res$eig <- eigRes$values
+  nf <- min(nf, sum(res$eig>1e-10))
+  ##res$matprod <- allProd # for debugging
+  ## use: li = XQU = V\Lambda^(1/2)
+  eigRes$vectors <- eigRes$vectors * sqrt(nInd(x)) # D-normalize vectors
+  res$scores <- sweep(eigRes$vectors[, 1:nf, drop=FALSE],2, sqrt(eigRes$values[1:nf]), FUN="*")
+  ## GET LOADINGS ##
+  ## need to decompose X^TDV into a sum of n matrices of dim p*r
+  ## but only two such matrices are represented at a time
+  if(loadings){
+    if(scale) {
+      vecSd <- sqrt(vecVar)
+    }
+    res$loadings <- matrix(0, nrow=nLoc(x), ncol=nf) # create empty matrix
+    ## use: c1 = X^TDV
+    ## and X^TV = A_1 + ... + A_n
+    ## with A_k = X_[k-]^T v[k-]
+    myPloidy <- ploidy(x)
+    for(k in 1:nInd(x)){
+      temp <- as.integer(x@gen[[k]]) / myPloidy[k]
+      if(center) {
+        temp[is.na(temp)] <- vecMeans[is.na(temp)]
+        temp <- temp - vecMeans
+      } else {
+        temp[is.na(temp)] <- 0
+      }
+      if(scale){
+        temp <- temp/vecSd
+      }
+      res$loadings <- res$loadings + matrix(temp) %*% eigRes$vectors[k, 1:nf, drop=FALSE]
+    }
+    res$loadings <- res$loadings / nInd(x) # don't forget the /n of X_tDV
+    res$loadings <- sweep(res$loadings, 2, sqrt(eigRes$values[1:nf]), FUN="/")
+  }
+  ## FORMAT OUTPUT ##
+  colnames(res$scores) <- paste("PC", 1:nf, sep="")
+  if(!is.null(indNames(x))){
+    rownames(res$scores) <- indNames(x)
+  } else {
+    rownames(res$scores) <- 1:nInd(x)
+  }
+  if(!is.null(res$loadings)){
+    colnames(res$loadings) <- paste("Axis", 1:nf, sep="")
+    if(!is.null(locNames(x)) & !is.null(alleles(x))){
+      rownames(res$loadings) <- paste(locNames(x),alleles(x), sep=".")
+    } else {
+      rownames(res$loadings) <- 1:nLoc(x)
+    }
+  }
+  if(returnDotProd){
+    res$dotProd <- allProd
+    rownames(res$dotProd) <- colnames(res$dotProd) <- indNames(x)
+  }
+  res$call <- match.call()
+  class(res) <- "glPca"
+  return(res)
+}
+
+# ---------------------------------------------------------
+
+
+
+
+
+# IMPORT SNP data from VCF
+vcf <- read.vcfR("LAB_NEN_ODN.clean_BI.ann.3mbChr5 (1).vcf")   #read in all data
+
+head(vcf)
+head(aa.genlight)
+
+# convert to genlight 	
+aa.genlight <- vcfR2genlight.tetra(vcf)                           ## use the modified function vcfR2genlight.tetra at the end of the file
+locNames(aa.genlight) <- paste(vcf@fix[,1],vcf@fix[,2],sep="_")   # add real SNP.names
+pop(aa.genlight)<-substr(indNames(aa.genlight),1,3)               # add pop names: here pop names are first 3 chars of ind name
+
+#check
+aa.genlight
+indNames(aa.genlight)
+ploidy(aa.genlight)
+
+
+
+
+
+############
+#   PCA 
+############
+# run a PCA
+pca.1 <- glPcaFast(aa.genlight, nf=300) # use the modified function glPcaFast at the end of the file
+
+### PLOTTING
+scatter(pca.1, posi="bottomright")  # plot scatter with the indiv labels
+loadingplot(pca.1)
+
+# proportion of explained variance by first three axes
+pca.1$eig[1]/sum(pca.1$eig) # proportion of variation explained by 1st axis
+pca.1$eig[2]/sum(pca.1$eig) # proportion of variation explained by 2nd axis
+pca.1$eig[3]/sum(pca.1$eig) # proportion of variation explained by 3rd axis
+
+
+
+# just to see pops coloured in a palette
+col <- funky(10)
+s.class(pca.1$scores, pop(aa.genlight),  xax=1, yax=2, col=transp(col,.6), 
+        ellipseSize=0, starSize=0, ppoints.cex=4, paxes.draw=T, pgrid.draw =F)
+
+#my custom colours
+new_colours <- c("blue", "red", "green")
+
+n_populations <- length(unique(pop(aa.genlight))) # Get the number of populations
+print(n_populations)
+if (length(new_colours) < n_populations) {
+  stop ("Not enough colors provided")
+}
+
+population_colors <- new_colours[as.factor(pop(aa.genlight))]
+
+col <- funky(10)
+s.class(pca.1$scores, pop(aa.genlight),  xax=1, yax=2, col=transp(new_colours,.4), 
+        ellipseSize=0, starSize=0, ppoints.cex=4, paxes.draw=T, pgrid.draw =F,
+        xlab="PC1", ylab="PC2")
+
+# save nice figs
+pdf ("PCA_all_SNPs_ax12_1K_less.pdf", width=14, height=7)
+g1 <- s.class(pca.1$scores, pop(aa.genlight),  xax=1, yax=2, col=transp(col,.6), 
+              ellipseSize=0, starSize=0, ppoints.cex=4, paxes.draw=T, pgrid.draw =F, plot = FALSE)
+g2 <- s.label (pca.1$scores, xax=1, yax=2, ppoints.col = "red", plabels = list(box = list(draw = FALSE), 
+                                                                               optim = TRUE), paxes.draw=T, pgrid.draw =F, plabels.cex=1, plot = FALSE)
+ADEgS(c(g1, g2), layout = c(1, 2))
+dev.off()
+
+#DAPC
+barplot(pca.1$eig, main = "PCA eigenvalues")
+
+#view stored eigen values 
+head(pca.1$scores[, 1:5])
+
+
+#Graph to show the cumulative amount of genetic information brought by each pc
+temp <- cumsum(pca.1$eig)/sum(pca.1$eig)
+plot(temp, xlab = "Added PC", ylab = "Fraction of the total genetic information")
+min(which(temp > 0.8)) #Retain 12 pcs as they contain 80% of total variance 
+
+#assigning new genotypes to clusters 
+x.lda <- lda(pca.1$scores[, 1:12], grouping = pop(aa.genlight))
+names(x.lda)
+
+x.pred <- predict(x.lda)
+names(x.pred)
+x.pred$class
+
+head(x.pred$posterior[, 1:3])
+
+mean(x.pred$class == pop(aa.genlight))
+
+head(x.pred$posterior[, 1:3])
+
+
+
+
+
+
+# Perform DAPC
+dapc_res <- dapc(aa.genlight, pop(aa.genlight))
+
+# Scatterplot of DAPC results
+scatter(dapc_res)
+
+# Membership barplot
+compoplot(dapc_res, show.lab = TRUE, col = funky(10))
+
+summary(dapc_res)
+
+#Read fst scan results into R
+fst_data <- read.table("c:/Users/44794/OneDrive - The University of Nottingham/Documents/Thomas R/fst_results.windowed.weir.fst", header = TRUE)
+library(ggplot2)
+head(fst_data)
+
+
+#Finding the top 1% empirical outliers for LAB_NEN fst
+one_percent_empericaloutliers <- quantile(fst_data$WEIGHTED_FST, 0.99)
+fst_data$one_percent_empericaloutliers <- fst_data$WEIGHTED_FST > one_percent_empericaloutliers
+head(fst_data)
+candidate_selective_sweep_regions <- fst_data[fst_data$one_percent_empericaloutliers == TRUE, ]
+head(candidate_selective_sweep_regions)
+write.table(candidate_selective_sweep_regions, "candidate_selective_sweep_regions.txt", row.names = FALSE, quote = FALSE, sep = "\t")
+library(dplyr)
+candidate_selective_sweep_regions <- candidate_selective_sweep_regions %>% select(-one_percent_empericaloutliers)
+write.table(candidate_selective_sweep_regions, "candidate_selective_sweep_regionscandidate_selective_sweep_regions.txt.txt2", row.names = FALSE, quote = FALSE, sep = "\t")
+
+
+#Read fst scan results into R
+fst_data_LAB_ODN <- read.table("c:/Users/44794/OneDrive - The University of Nottingham/Documents/Thomas R/fst_results_ODN_LAB.windowed.weir.fst", header = TRUE)
+library(ggplot2)
+head(fst_data_LAB_ODN)
+
+#Finding the top 1% empirical outliers for LAB_ODN fst
+one_percent_empericaloutliers_LAB_ODN <- quantile(fst_data_LAB_ODN$WEIGHTED_FST, 0.99)
+fst_data_LAB_ODN$one_percent_empericaloutliers_LAB_ODN <- fst_data_LAB_ODN$WEIGHTED_FST > one_percent_empericaloutliers_LAB_ODN
+head(fst_data_LAB_ODN)
+candidate_selective_sweep_regions_LAB_ODN <- fst_data_LAB_ODN[fst_data_LAB_ODN$one_percent_empericaloutliers_LAB_ODN == TRUE, ]
+head(candidate_selective_sweep_regions_LAB_ODN)
+write.table(candidate_selective_sweep_regions_LAB_ODN, "candidate_selective_sweep_regions_LAB_ODN.txt", row.names = FALSE, quote = FALSE, sep = "\t")
+library(dplyr)
+candidate_selective_sweep_regions_LAB_ODN <- candidate_selective_sweep_regions_LAB_ODN %>% select(-one_percent_empericaloutliers_LAB_ODN)
+write.table(candidate_selective_sweep_regions_LAB_ODN, "candidate_selective_sweep_regions_LAB_ODN.txt2", row.names = FALSE, quote = FALSE, sep = "\t")
+
+
+
+
+
+
+#Finding the top 1% empirical outliers for LAB_NEN fst
+
+ggplot(fst_data, aes(x = V2, y = V5, color = as.factor(V1))) +
+  geom_point(size = 1) +
+  labs(title = "Genome-wide Fst Plot",
+       x = "Genomic Position (BIN_START)",
+       y = "Weighted Fst") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  facet_wrap(~ V1, scales = "free_x")
+
+#Identify empirical outliers
+# Define threshold 
+fst_threshold_LAB_NENT <- quantile(fst_data$WEIGHTED_FST, 0.99)
+
+#flag
+fst_data$outlier <- fst_data$WEIGHTED_FST > fst_threshold
+
+ggplot(fst_data, aes(x = BIN_START, y = WEIGHTED_FST, color = outlier)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("green", "red")) + 
+  labs(title = "Manhattan plot of LAB and NENT populations",
+       x = "Position",
+       y = "Weighted Fst") +
+  theme_minimal()
+
+
+# Define threshold 
+fst_threshold_LAB_ODN <- quantile(fst_data_LAB_ODN$WEIGHTED_FST, 0.99)
+
+#flag
+fst_data_LAB_ODN$outlier <- fst_data_LAB_ODN$WEIGHTED_FST > fst_threshold_LAB_ODN
+
+ggplot(fst_data_LAB_ODN, aes(x = BIN_START, y = WEIGHTED_FST, color = outlier)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("green", "red")) + 
+  labs(title = "Manhattan Plot of LAB and ODN populations",
+       x = "Position",
+       y = "Weighted Fst") +
+  theme_minimal()
+
