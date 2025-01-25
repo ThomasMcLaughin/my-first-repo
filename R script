@@ -262,17 +262,20 @@ dev.off()
 #######################################
 
 #First NJ tree (labelled populations but no colour)
+
 library(ape)
 tre <- nj(dist(as.matrix(aa.genlight)))
 plot(tre, typ="fan", cex=0.7)
 title("NJ tree of Cochlearia populations")
 
 # scatter plot with eigen values 
+
 myCol <- colorplot(pca.1$scores,pca.1$scores, transp=TRUE, cex=4)
 abline(h=0,v=0, col="grey")
 add.scatter.eig(pca.1$eig[1:21],2,1,2, posi="topright", inset=.05, ratio=.3)
 
 # coloured NJ tree
+
 plot(tre, typ="fan", show.tip=FALSE)
 tiplabels(pch=20, col=population_colors, cex=4)
 
@@ -287,18 +290,29 @@ head(fst_data)
 #######################################################################################
 ## Finding candidate selective sweep regions (1% empirical outliers) for LAB_NEN fst ##
 #######################################################################################
+
+# make threshold for 1 percent emperical outlier 
 one_percent_empericaloutliers <- quantile(fst_data$WEIGHTED_FST, 0.99) 
 
+# make 1 percent emperical outlier column
 fst_data$one_percent_empericaloutliers <- fst_data$WEIGHTED_FST > one_percent_empericaloutliers
 head(fst_data)
 
+# Filter data for only outliers
 candidate_selective_sweep_regions <- fst_data[fst_data$one_percent_empericaloutliers == TRUE, ]
 head(candidate_selective_sweep_regions)
 
-write.table(candidate_selective_sweep_regions, "candidate_selective_sweep_regions.txt", row.names = FALSE, quote = FALSE, sep = "\t")
+# make table of cadndidate selective sweep regions
+write.table(candidate_selective_sweep_regions, "candidate_selective_sweep_regions.txt", row.names = FALSE, quote = FALSE)
 library(dplyr)
+
+# Removing empty one_percent_empericaloutliers column
 candidate_selective_sweep_regions <- candidate_selective_sweep_regions %>% select(-one_percent_empericaloutliers)
-write.table(candidate_selective_sweep_regions, "candidate_selective_sweep_regions.txt2", row.names = FALSE, quote = FALSE, sep = "\t")
+write.table(candidate_selective_sweep_regions, "candidate_selective_sweep_regions.txt2", row.names = FALSE, quote = FALSE)
+
+# row.names = FALSE (dont inxlude row names) 
+# quote = FALSE (dont include "")
+
 
 #################################################
 ## Read fst scan results for LAB vs ODN into R ##
@@ -311,18 +325,28 @@ head(fst_data_LAB_ODN)
 ## Finding candidate selective sweep regions (1% empirical outliers) for LAB vs ODN fst ##
 ##########################################################################################
 
+# make threshold for 1 percent emperical outlier 
 one_percent_empericaloutliers_LAB_ODN <- quantile(fst_data_LAB_ODN$WEIGHTED_FST, 0.99)
 
+# make 1 percent emperical outlier column
 fst_data_LAB_ODN$one_percent_empericaloutliers_LAB_ODN <- fst_data_LAB_ODN$WEIGHTED_FST > one_percent_empericaloutliers_LAB_ODN
 head(fst_data_LAB_ODN)
 
+# Filter data for only outliers 
 candidate_selective_sweep_regions_LAB_ODN <- fst_data_LAB_ODN[fst_data_LAB_ODN$one_percent_empericaloutliers_LAB_ODN == TRUE, ]
 head(candidate_selective_sweep_regions_LAB_ODN)
 
-write.table(candidate_selective_sweep_regions_LAB_ODN, "candidate_selective_sweep_regions_LAB_ODN.txt", row.names = FALSE, quote = FALSE, sep = "\t")
+# make table of cadndidate selective sweep regions
+write.table(candidate_selective_sweep_regions_LAB_ODN, "candidate_selective_sweep_regions_LAB_ODN.txt", row.names = FALSE, quote = FALSE)
 library(dplyr)
+
+# Removing empty one_percent_empericaloutliers_LAB_ODN column
 candidate_selective_sweep_regions_LAB_ODN <- candidate_selective_sweep_regions_LAB_ODN %>% select(-one_percent_empericaloutliers_LAB_ODN)
-write.table(candidate_selective_sweep_regions_LAB_ODN, "candidate_selective_sweep_regions_LAB_ODN.txt2", row.names = FALSE, quote = FALSE, sep = "\t")
+write.table(candidate_selective_sweep_regions_LAB_ODN, "candidate_selective_sweep_regions_LAB_ODN.txt2", row.names = FALSE, quote = FALSE)
+
+# row.names = FALSE (dont inxlude row names) 
+# quote = FALSE (dont include "")
+
 
 ################################################
 ## Manhattan plot of LAB and NENT populations ##
