@@ -1,0 +1,48 @@
+	vcftools --gzvcf YOUR.vcf.gz \
+	         --max-missing 0.8 \					#best practice to keep only sites with less than 20% of the data missing
+			 --maf 0.05 \							#best practice to keep only sites with less than 20% of the data missing
+			 --weir-fst-pop LAB_population.txt \	
+			 --weir-fst-pop NEN_population.txt \
+			 --fst-window-size 5000 \				
+			 --fst-window-step 5000 \				
+
+#plain text files required for the above according to vcftools manual:
+
+nano LAB_population.txt
+LAB_004
+LAB_1
+LAB_2
+LAB_300
+LAB_4
+LAB_400
+LAB_5
+LAB_500 
+
+nano NEN_population.txt 
+NEN_001
+NEN_003
+NEN_200
+NEN_300
+NEN_4
+NEN_5
+NEN_6   
+
+nano ODN_population.txt
+ODN_10
+ODN_2
+ODN_4
+ODN_5
+ODN_6
+ODN_7
+ODN_9
+
+
+vcftools --gzvcf LAB_NEN_ODN.clean_BI.ann.3mbChr5.vcf.gz \              # Specify your input VCF file (compressed with .gz)
+         --max-missing 0.8 \                 # Include only variants with at least 80% data available
+         --maf 0.05 \                        # Include only variants with a minor allele frequency (MAF) > 5%
+         --weir-fst-pop LAB_population.txt \  # Specify the population file for LAB population
+         --weir-fst-pop ODN_population.txt \  # Specify the population file for NEN population
+         --fst-window-size 5000 \            # Window size of 5000 base pairs for sliding window calculation
+         --fst-window-step 5000 \            # Step size for sliding window (non-overlapping windows in this case)
+         --out fst_results_ODN_LAB                    # Output file prefix for the Fst results
+ 
