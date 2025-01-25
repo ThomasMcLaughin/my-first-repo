@@ -1,0 +1,33 @@
+
+# converting .txt files to bed format
+
+awk 'NR > 1 {print $1 "\t" $2-1 "\t" $3}'  candidate_selective_sweep_regions_LAB_ODN.txt2 > candidate_selective_sweep_regions_LAB_ODN.bed
+
+# NR > 1 first line (the header) is skipped
+# $1 printing the chromosme name 
+# "\t" separate the output by tabs, which is required for bed formatting 
+# $2-1 subtract 1 from the seccond column (start psoition must be ending in a 0 as bed tool uses zero based indexing)#
+# $3 print the third column (end position)
+
+  
+# converting GFF3 file to bed file 
+
+awk 'BEGIN {OFS="\t"} {if($3=="gene") {split($9, a, ";"); split(a[1], b, "="); print $1, $4-1, $5, b[2], ".", $7}}' C_excelsa_V5_braker2_wRseq.gff3 > genes.bed4
+
+  #BEGIN {OFS="\t"} sets output feild separator to a tab. emsures that the output .bed is separated by tabs
+  
+  #{if($3=="gene") only rows with gene data will be processed
+
+  #{split($9, a, ";") Any attrbutes in column 9 which are separated by a ; are split 
+
+  #split(a[1], b, "=") split first attribute (separated by equals sign) into new array.
+  ie ID=g267 is split into ID and g267
+
+  #print $1, $4-1, $5, b[2], ".", $7}} this is the output 
+$1 print the chromosome name 
+$4-1 converts the start positon to a zero based format (needed for bed tools interpretation)
+$5 is the end psoition column
+b[2] is the gene ID (as seen above in format g.....ect)
+"." score field used for bed 
+$7 column which shows if the strand is positive or negative (5' -> 3' or 3' -> 5')
+
