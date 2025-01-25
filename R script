@@ -231,7 +231,7 @@ col <- funky(10)
 s.class(pca.1$scores, pop(aa.genlight),  xax=1, yax=2, col=transp(col,.6), 
         ellipseSize=0, starSize=0, ppoints.cex=4, paxes.draw=T, pgrid.draw =F)
 
-#my custom colours
+# my custom colours
 new_colours <- c("blue", "red", "green")
 
 n_populations <- length(unique(pop(aa.genlight))) # Get the number of populations
@@ -256,99 +256,78 @@ g2 <- s.label (pca.1$scores, xax=1, yax=2, ppoints.col = "red", plabels = list(b
 ADEgS(c(g1, g2), layout = c(1, 2))
 dev.off()
 
-#DAPC
-barplot(pca.1$eig, main = "PCA eigenvalues")
 
-#view stored eigen values 
-head(pca.1$scores[, 1:5])
+#######################################
+## Seccond scatter plot and NJ trees ##  - All from https://github.com/thibautjombart/adegenet/wiki/Tutorials 
+#######################################
 
+#First NJ tree (labelled populations but no colour)
+library(ape)
+tre <- nj(dist(as.matrix(aa.genlight)))
+plot(tre, typ="fan", cex=0.7)
+title("NJ tree of Cochlearia populations")
 
-#Graph to show the cumulative amount of genetic information brought by each pc
-temp <- cumsum(pca.1$eig)/sum(pca.1$eig)
-plot(temp, xlab = "Added PC", ylab = "Fraction of the total genetic information")
-min(which(temp > 0.8)) #Retain 12 pcs as they contain 80% of total variance 
+# scatter plot with eigen values 
+myCol <- colorplot(pca.1$scores,pca.1$scores, transp=TRUE, cex=4)
+abline(h=0,v=0, col="grey")
+add.scatter.eig(pca.1$eig[1:21],2,1,2, posi="topright", inset=.05, ratio=.3)
 
-#assigning new genotypes to clusters 
-x.lda <- lda(pca.1$scores[, 1:12], grouping = pop(aa.genlight))
-names(x.lda)
+# coloured NJ tree
+plot(tre, typ="fan", show.tip=FALSE)
+tiplabels(pch=20, col=population_colors, cex=4)
 
-x.pred <- predict(x.lda)
-names(x.pred)
-x.pred$class
+##################################################
+## Read fst scan results for LAB vs NENT into R ##
+##################################################
 
-head(x.pred$posterior[, 1:3])
-
-mean(x.pred$class == pop(aa.genlight))
-
-head(x.pred$posterior[, 1:3])
-
-
-
-
-
-
-# Perform DAPC
-dapc_res <- dapc(aa.genlight, pop(aa.genlight))
-
-# Scatterplot of DAPC results
-scatter(dapc_res)
-
-# Membership barplot
-compoplot(dapc_res, show.lab = TRUE, col = funky(10))
-
-summary(dapc_res)
-
-#Read fst scan results into R
 fst_data <- read.table("c:/Users/44794/OneDrive - The University of Nottingham/Documents/Thomas R/fst_results.windowed.weir.fst", header = TRUE)
 library(ggplot2)
 head(fst_data)
 
+#######################################################################################
+## Finding candidate selective sweep regions (1% empirical outliers) for LAB_NEN fst ##
+#######################################################################################
+one_percent_empericaloutliers <- quantile(fst_data$WEIGHTED_FST, 0.99) 
 
-#Finding the top 1% empirical outliers for LAB_NEN fst
-one_percent_empericaloutliers <- quantile(fst_data$WEIGHTED_FST, 0.99)
 fst_data$one_percent_empericaloutliers <- fst_data$WEIGHTED_FST > one_percent_empericaloutliers
 head(fst_data)
+
 candidate_selective_sweep_regions <- fst_data[fst_data$one_percent_empericaloutliers == TRUE, ]
 head(candidate_selective_sweep_regions)
+
 write.table(candidate_selective_sweep_regions, "candidate_selective_sweep_regions.txt", row.names = FALSE, quote = FALSE, sep = "\t")
 library(dplyr)
 candidate_selective_sweep_regions <- candidate_selective_sweep_regions %>% select(-one_percent_empericaloutliers)
-write.table(candidate_selective_sweep_regions, "candidate_selective_sweep_regionscandidate_selective_sweep_regions.txt.txt2", row.names = FALSE, quote = FALSE, sep = "\t")
+write.table(candidate_selective_sweep_regions, "candidate_selective_sweep_regions.txt2", row.names = FALSE, quote = FALSE, sep = "\t")
 
-
-#Read fst scan results into R
+#################################################
+## Read fst scan results for LAB vs ODN into R ##
+#################################################
 fst_data_LAB_ODN <- read.table("c:/Users/44794/OneDrive - The University of Nottingham/Documents/Thomas R/fst_results_ODN_LAB.windowed.weir.fst", header = TRUE)
 library(ggplot2)
 head(fst_data_LAB_ODN)
 
-#Finding the top 1% empirical outliers for LAB_ODN fst
+##########################################################################################
+## Finding candidate selective sweep regions (1% empirical outliers) for LAB vs ODN fst ##
+##########################################################################################
+
 one_percent_empericaloutliers_LAB_ODN <- quantile(fst_data_LAB_ODN$WEIGHTED_FST, 0.99)
+
 fst_data_LAB_ODN$one_percent_empericaloutliers_LAB_ODN <- fst_data_LAB_ODN$WEIGHTED_FST > one_percent_empericaloutliers_LAB_ODN
 head(fst_data_LAB_ODN)
+
 candidate_selective_sweep_regions_LAB_ODN <- fst_data_LAB_ODN[fst_data_LAB_ODN$one_percent_empericaloutliers_LAB_ODN == TRUE, ]
 head(candidate_selective_sweep_regions_LAB_ODN)
+
 write.table(candidate_selective_sweep_regions_LAB_ODN, "candidate_selective_sweep_regions_LAB_ODN.txt", row.names = FALSE, quote = FALSE, sep = "\t")
 library(dplyr)
 candidate_selective_sweep_regions_LAB_ODN <- candidate_selective_sweep_regions_LAB_ODN %>% select(-one_percent_empericaloutliers_LAB_ODN)
 write.table(candidate_selective_sweep_regions_LAB_ODN, "candidate_selective_sweep_regions_LAB_ODN.txt2", row.names = FALSE, quote = FALSE, sep = "\t")
 
+################################################
+## Manhattan plot of LAB and NENT populations ##
+################################################
 
-
-
-
-
-#Finding the top 1% empirical outliers for LAB_NEN fst
-
-ggplot(fst_data, aes(x = V2, y = V5, color = as.factor(V1))) +
-  geom_point(size = 1) +
-  labs(title = "Genome-wide Fst Plot",
-       x = "Genomic Position (BIN_START)",
-       y = "Weighted Fst") +
-  theme_minimal() +
-  theme(legend.position = "none") +
-  facet_wrap(~ V1, scales = "free_x")
-
-#Identify empirical outliers
 # Define threshold 
 fst_threshold_LAB_NENT <- quantile(fst_data$WEIGHTED_FST, 0.99)
 
@@ -363,6 +342,9 @@ ggplot(fst_data, aes(x = BIN_START, y = WEIGHTED_FST, color = outlier)) +
        y = "Weighted Fst") +
   theme_minimal()
 
+################################################
+## Manhattan plot of LAB and NENT populations ##
+################################################
 
 # Define threshold 
 fst_threshold_LAB_ODN <- quantile(fst_data_LAB_ODN$WEIGHTED_FST, 0.99)
@@ -377,4 +359,5 @@ ggplot(fst_data_LAB_ODN, aes(x = BIN_START, y = WEIGHTED_FST, color = outlier)) 
        x = "Position",
        y = "Weighted Fst") +
   theme_minimal()
+
 
