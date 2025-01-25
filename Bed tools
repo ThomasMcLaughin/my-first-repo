@@ -31,3 +31,5 @@ b[2] is the gene ID (as seen above in format g.....ect)
 "." score field used for bed 
 $7 column which shows if the strand is positive or negative (5' -> 3' or 3' -> 5')
 
+https://biohpc.cornell.edu/lab/doc/linux_examples_exercises_v5.html
+Also tried to run - https://github.com/YoannPa/Gff3ToBed, with no success
